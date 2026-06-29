@@ -1,0 +1,48 @@
+{
+  "name": "light-reminder-desktop",
+  "version": "0.1.0",
+  "description": "A lightweight desktop reminder app for quick task capture.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder --win portable",
+    "pack:win": "electron-builder --win dir"
+  },
+  "keywords": [
+    "reminder",
+    "todo",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "build": {
+    "appId": "com.light-reminder-desktop.app",
+    "productName": "轻量提醒",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "轻量提醒-${version}-portable.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^26.15.3"
+  }
+}

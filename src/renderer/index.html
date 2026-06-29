@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>轻量提醒</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="titlebar">
+        <div class="drag-region">
+          <strong>轻量提醒</strong>
+          <span id="taskCount" class="task-count">0 项</span>
+        </div>
+        <div class="window-actions">
+          <button id="settingsToggle" class="icon-button" title="设置" aria-label="设置">SET</button>
+          <button id="pinToggle" class="icon-button" title="置顶窗口" aria-label="置顶窗口">PIN</button>
+          <button id="collapseWindow" class="icon-button" title="折叠窗口" aria-label="折叠窗口">-</button>
+          <button id="hideWindow" class="icon-button" title="隐藏窗口" aria-label="隐藏窗口">_</button>
+        </div>
+      </header>
+
+      <section class="group-panel">
+        <div id="groupTabs" class="group-tabs" aria-label="任务分组"></div>
+        <div class="group-actions">
+          <button id="addGroup" type="button">新分组</button>
+          <button id="renameGroup" type="button">重命名</button>
+          <button id="deleteGroup" type="button">删除</button>
+        </div>
+        <form id="groupEditor" class="group-editor is-hidden">
+          <input id="groupNameInput" type="text" autocomplete="off" placeholder="分组名称" />
+          <button id="saveGroup" type="submit">保存</button>
+          <button id="cancelGroupEdit" type="button">取消</button>
+        </form>
+        <div id="groupDeleteConfirm" class="group-confirm is-hidden">
+          <span id="groupDeleteText">删除当前分组，任务移回收集箱？</span>
+          <button id="confirmDeleteGroup" type="button">删除</button>
+          <button id="cancelDeleteGroup" type="button">取消</button>
+        </div>
+      </section>
+
+      <section class="quick-add">
+        <section id="reminderPanel" class="reminder-panel is-hidden" aria-live="assertive">
+          <div class="reminder-panel-header">
+            <strong>到点提醒</strong>
+            <button id="dismissReminderPanel" type="button" title="收起提醒" aria-label="收起提醒">收起</button>
+          </div>
+          <div id="reminderList" class="reminder-list"></div>
+        </section>
+
+        <form id="taskForm" class="task-form">
+          <input id="taskInput" type="text" autocomplete="off" placeholder="输入任务，例：明天10点确认报价" />
+          <button type="submit">添加</button>
+        </form>
+        <div class="quick-actions">
+          <button id="addClipboard" type="button">剪贴板文字</button>
+          <button id="addImage" type="button">添加图片</button>
+          <button id="pasteImage" type="button">粘贴图片</button>
+          <button id="clearCompleted" type="button">清理已完成</button>
+        </div>
+      </section>
+
+      <section class="list-toolbar">
+        <button class="filter is-active" data-filter="todo" type="button">待办</button>
+        <button class="filter" data-filter="overdue" type="button">逾期</button>
+        <button class="filter" data-filter="waiting" type="button">等反馈</button>
+        <button class="filter" data-filter="risk" type="button">风险</button>
+        <button class="filter" data-filter="all" type="button">全部</button>
+        <button class="filter" data-filter="done" type="button">已完成</button>
+      </section>
+
+      <section id="taskList" class="task-list" aria-live="polite"></section>
+
+      <section id="settingsPanel" class="settings-panel is-hidden" aria-label="设置">
+        <div class="settings-card">
+          <div class="settings-header">
+            <strong>设置</strong>
+            <button id="closeSettings" class="icon-button" type="button" title="关闭设置" aria-label="关闭设置">X</button>
+          </div>
+          <label class="setting-row">
+            <span>窗口置顶</span>
+            <input id="settingAlwaysOnTop" type="checkbox" />
+          </label>
+          <label class="setting-row">
+            <span>开机自动打开</span>
+            <input id="settingOpenAtLogin" type="checkbox" />
+          </label>
+          <label class="setting-row range-row">
+            <span>面板透明度</span>
+            <input id="settingOpacity" type="range" min="45" max="100" step="5" />
+            <strong id="opacityValue">100%</strong>
+          </label>
+          <label class="setting-row">
+            <span>快捷键自动复制选中文字</span>
+            <input id="settingAutoCopySelection" type="checkbox" />
+          </label>
+          <label class="setting-row">
+            <span>添加后恢复剪贴板</span>
+            <input id="settingRestoreClipboard" type="checkbox" />
+          </label>
+          <div class="shortcut-settings">
+            <label>
+              <span>快速输入</span>
+              <input id="shortcutQuickInput" type="text" spellcheck="false" />
+            </label>
+            <label>
+              <span>剪贴板添加</span>
+              <input id="shortcutClipboardTask" type="text" spellcheck="false" />
+            </label>
+            <label>
+              <span>显示/隐藏</span>
+              <input id="shortcutToggleWindow" type="text" spellcheck="false" />
+            </label>
+          </div>
+          <div id="shortcutStatus" class="shortcut-status"></div>
+          <div class="settings-actions">
+            <button id="saveSettings" type="button">保存</button>
+            <button id="resetShortcuts" type="button">恢复默认快捷键</button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="statusbar">
+        <span id="quickInputHint">Control+Alt+Space 快速输入</span>
+        <span id="clipboardHint">Control+Alt+T 剪贴板添加</span>
+      </footer>
+    </main>
+
+    <template id="taskTemplate">
+      <article class="task-item">
+        <button class="complete-button" type="button" title="完成 / 取消完成" aria-label="完成 / 取消完成"></button>
+        <div class="task-main">
+          <input class="task-title" type="text" />
+          <div class="task-meta"></div>
+          <div class="task-controls">
+            <select class="task-group-select" title="移动到分组" aria-label="移动到分组"></select>
+            <input class="task-reminder-input" type="datetime-local" title="修改提醒时间" aria-label="修改提醒时间" />
+            <button class="clear-reminder" type="button" title="清除提醒" aria-label="清除提醒">清</button>
+          </div>
+          <div class="attachment-strip"></div>
+        </div>
+        <div class="task-actions">
+          <button class="pm-status-task" type="button" title="切换任务状态" aria-label="切换任务状态">待</button>
+          <button class="attach-task" type="button" title="给任务添加图片" aria-label="给任务添加图片">IMG</button>
+          <button class="pin-task" type="button" title="置顶任务" aria-label="置顶任务">PIN</button>
+          <button class="snooze-task" type="button" title="30分钟后提醒" aria-label="30分钟后提醒">+30</button>
+          <button class="delete-task" type="button" title="删除任务" aria-label="删除任务">DEL</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
