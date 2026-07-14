@@ -124,6 +124,7 @@ body.is-collapsed .statusbar {
 .group-actions button:hover,
 .quick-actions button:hover,
 .filter:hover,
+.task-quick-actions button:hover,
 .task-actions button:hover,
 .attachment-thumb:hover {
   background: #e2e8f0;
@@ -412,6 +413,11 @@ body.is-collapsed .statusbar {
   gap: 8px;
 }
 
+.settings-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
 .settings-header strong {
   font-size: 14px;
 }
@@ -514,11 +520,11 @@ body.is-collapsed .statusbar {
 
 .task-item {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 36px;
-  gap: 8px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 7px;
   align-items: start;
-  margin-bottom: 8px;
-  padding: 9px;
+  margin-bottom: 6px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -579,11 +585,18 @@ body.is-collapsed .statusbar {
 }
 
 .task-title {
-  height: 30px;
-  padding: 0 8px;
+  height: 27px;
+  padding: 0 4px;
   border-color: transparent;
   background: transparent;
   font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.task-title:not(:focus) {
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .task-item.is-done .task-title {
@@ -592,18 +605,32 @@ body.is-collapsed .statusbar {
 }
 
 .task-meta {
-  min-height: 18px;
-  padding: 2px 8px 0;
+  min-height: 17px;
+  padding: 0 4px;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-details {
+  display: none;
+  padding: 7px 4px 1px;
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+
+.task-item.is-expanded .task-details {
+  display: grid;
+  gap: 7px;
 }
 
 .task-controls {
   display: grid;
-  grid-template-columns: minmax(82px, 0.85fr) minmax(132px, 1.15fr) 30px;
+  grid-template-columns: minmax(78px, 0.8fr) minmax(138px, 1.2fr) 42px;
   gap: 6px;
-  padding: 6px 8px 0;
 }
 
 .task-controls select,
@@ -645,7 +672,6 @@ body.is-collapsed .statusbar {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 6px 8px 0;
 }
 
 .attachment-thumb {
@@ -665,19 +691,36 @@ body.is-collapsed .statusbar {
   object-fit: cover;
 }
 
-.task-actions {
+.task-quick-actions {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.task-actions button {
-  width: 34px;
+.task-quick-actions button {
+  min-width: 34px;
   height: 26px;
+  padding: 0 7px;
   border-radius: 6px;
   background: #f1f5f9;
   color: #475569;
   font-size: 10px;
+  font-weight: 700;
+}
+
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-actions button {
+  height: 27px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -686,12 +729,12 @@ body.is-collapsed .statusbar {
   color: var(--accent);
 }
 
-.task-actions .pm-status-task.is-waiting {
+.task-quick-actions .pm-status-task.is-waiting {
   background: #e0f2fe;
   color: #0369a1;
 }
 
-.task-actions .pm-status-task.is-risk {
+.task-quick-actions .pm-status-task.is-risk {
   background: #fee2e2;
   color: #b91c1c;
 }
@@ -758,6 +801,7 @@ body.is-collapsed .statusbar {
   .task-controls button,
   .quick-actions button,
   .filter,
+  .task-quick-actions button,
   .task-actions button,
   .attachment-thumb {
     background: #273449;

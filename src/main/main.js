@@ -1,13 +1,16 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, Notification, nativeImage, screen, dialog, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, Notification, nativeImage, screen, dialog, shell, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
+const { parseReminder } = require('./reminderParser');
 
 let mainWindow;
 let tray;
-let reminderTimer;
+let reminderSafetyTimer;
+let nextReminderTimer;
 const notifiedTaskIds = new Set();
+const activeNotifications = new Set();
 let currentSettings = null;
 let shortcutStatus = {};
 let expandedWindowBounds = null;
@@ -251,51 +254,6 @@ function groupExists(groupId) {
   return readGroups().some((group) => group.id === groupId);
 }
 
-function parseReminder(text) {
-  const now = new Date();
-  const trimmed = normalizeText(text);
-  if (!trimmed) return null;
-
-  const minutesLater = trimmed.match(/(\d{1,3})\s*(分钟|分鐘|min|m)后/iu);
-  if (minutesLater) {
-    return new Date(now.getTime() + Number(minutesLater[1]) * 60 * 1000).toISOString();
-  }
-
-  const hoursLater = trimmed.match(/(\d{1,2})\s*(小时|小時|h)后/iu);
-  if (hoursLater) {
-    return new Date(now.getTime() + Number(hoursLater[1]) * 60 * 60 * 1000).toISOString();
-  }
-
-  const explicitDate = trimmed.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\s*(\d{1,2})(?::|点|點)(\d{1,2})?/u);
-  if (explicitDate) {
-    const [, year, month, day, hour, minute = '0'] = explicitDate;
-    return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), 0).toISOString();
-  }
-
-  const tomorrow = trimmed.match(/明天\s*(上午|下午|晚上)?\s*(\d{1,2})(?::|点|點)?(\d{1,2})?/u);
-  if (tomorrow) {
-    const [, period = '', rawHour, rawMinute = '0'] = tomorrow;
-    let hour = Number(rawHour);
-    if ((period === '下午' || period === '晚上') && hour < 12) hour += 12;
-    const target = new Date(now);
-    target.setDate(target.getDate() + 1);
-    target.setHours(hour, Number(rawMinute), 0, 0);
-    return target.toISOString();
-  }
-
-  const today = trimmed.match(/今天\s*(上午|下午|晚上)?\s*(\d{1,2})(?::|点|點)?(\d{1,2})?/u);
-  if (today) {
-    const [, period = '', rawHour, rawMinute = '0'] = today;
-    let hour = Number(rawHour);
-    if ((period === '下午' || period === '晚上') && hour < 12) hour += 12;
-    const target = new Date(now);
-    target.setHours(hour, Number(rawMinute), 0, 0);
-    if (target > now) return target.toISOString();
-  }
-
-  return null;
-}
-
 function createTask(input = {}) {
   const title = normalizeText(typeof input === 'string' ? input : input.title);
   if (!title) return null;
@@ -324,6 +282,7 @@ function createTask(input = {}) {
   const tasks = readTasks();
   tasks.unshift(task);
   writeTasks(tasks);
+  scheduleNextReminderCheck();
   broadcastTasks();
   return task;
 }
@@ -351,6 +310,7 @@ function updateTask(id, patch) {
     return next;
   });
   writeTasks(nextTasks);
+  scheduleNextReminderCheck();
   broadcastTasks();
   return nextTasks.find((task) => task.id === id) || null;
 }
@@ -359,6 +319,7 @@ function deleteTask(id) {
   const tasks = readTasks().filter((task) => task.id !== id);
   notifiedTaskIds.delete(id);
   writeTasks(tasks);
+  scheduleNextReminderCheck();
   broadcastTasks();
   return true;
 }
@@ -737,47 +698,120 @@ function surfaceDueTask(task) {
   }
 }
 
-function showSystemNotification(task) {
-  if (!Notification.isSupported()) return;
+function showSystemNotification(task, onClick = () => surfaceDueTask(task), onResult = () => {}) {
+  if (!Notification.isSupported()) {
+    logApp(`Native notification is not supported for task ${task.id}`);
+    onResult(false, new Error('当前系统不支持应用通知'));
+    return false;
+  }
 
+  let resultReported = false;
+  const reportResult = (delivered, error = null) => {
+    if (resultReported) return;
+    resultReported = true;
+    onResult(delivered, error);
+  };
   const notification = new Notification({
     title: '任务提醒',
     body: task.title,
     silent: false,
-    urgency: 'critical'
+    urgency: 'critical',
+    timeoutType: 'never'
   });
-  notification.on('click', () => surfaceDueTask(task));
-  notification.show();
+  activeNotifications.add(notification);
+  notification.on('show', () => {
+    logApp(`Native notification shown for task ${task.id}`);
+    setTimeout(() => reportResult(true), 600);
+  });
+  notification.on('click', () => {
+    activeNotifications.delete(notification);
+    onClick();
+  });
+  notification.on('close', () => activeNotifications.delete(notification));
+  notification.on('failed', (_event, error) => {
+    activeNotifications.delete(notification);
+    reportResult(false, error);
+    logApp(`Native notification failed for task ${task.id}`, error);
+  });
+
+  try {
+    notification.show();
+    return true;
+  } catch (error) {
+    activeNotifications.delete(notification);
+    reportResult(false, error);
+    logApp(`Failed to show native notification for task ${task.id}`, error);
+    return false;
+  }
+}
+
+function wasReminderDelivered(task) {
+  if (!task.remindAt || !task.notifiedAt) return false;
+  const remindTime = Date.parse(task.remindAt);
+  const notifiedTime = Date.parse(task.notifiedAt);
+  return Number.isFinite(remindTime) && Number.isFinite(notifiedTime) && notifiedTime >= remindTime;
+}
+
+function scheduleNextReminderCheck() {
+  if (nextReminderTimer) {
+    clearTimeout(nextReminderTimer);
+    nextReminderTimer = null;
+  }
+
+  const now = Date.now();
+  const nextTime = readTasks()
+    .filter((task) => task.status !== 'done' && task.remindAt && !wasReminderDelivered(task))
+    .map((task) => Date.parse(task.remindAt))
+    .filter((time) => Number.isFinite(time))
+    .reduce((earliest, time) => Math.min(earliest, time), Number.POSITIVE_INFINITY);
+
+  if (!Number.isFinite(nextTime)) return;
+
+  const delay = Math.min(Math.max(nextTime - now, 250), 2147483000);
+  nextReminderTimer = setTimeout(runReminderCheck, delay);
 }
 
 function runReminderCheck() {
   const now = Date.now();
   const tasks = readTasks();
   let changed = false;
+  const dueTasks = [];
 
   for (const task of tasks) {
     if (task.status === 'done' || !task.remindAt) continue;
     const remindTime = Date.parse(task.remindAt);
     if (Number.isNaN(remindTime) || remindTime > now) continue;
-    if (notifiedTaskIds.has(task.id)) continue;
+    if (notifiedTaskIds.has(task.id) || wasReminderDelivered(task)) continue;
 
     notifiedTaskIds.add(task.id);
     task.notifiedAt = new Date().toISOString();
     changed = true;
-
-    showSystemNotification(task);
-    surfaceDueTask(task);
+    dueTasks.push(task);
   }
 
   if (changed) {
     writeTasks(tasks);
     broadcastTasks();
   }
+
+  for (const task of dueTasks) {
+    logApp(`Reminder due for task ${task.id}; remindAt=${task.remindAt}`);
+    showSystemNotification(task);
+    try {
+      shell.beep();
+    } catch (error) {
+      logApp(`Failed to play reminder sound for task ${task.id}`, error);
+    }
+    surfaceDueTask(task);
+  }
+
+  scheduleNextReminderCheck();
 }
 
 function startReminderScheduler() {
-  if (reminderTimer) clearInterval(reminderTimer);
-  reminderTimer = setInterval(runReminderCheck, 10000);
+  if (reminderSafetyTimer) clearInterval(reminderSafetyTimer);
+  reminderSafetyTimer = setInterval(runReminderCheck, 30000);
+  scheduleNextReminderCheck();
 }
 
 ipcMain.handle('tasks:list', () => readTasks());
@@ -791,6 +825,7 @@ ipcMain.handle('tasks:delete', (_event, id) => deleteTask(id));
 ipcMain.handle('tasks:clearCompleted', (_event, groupId) => {
   const tasks = readTasks().filter((task) => task.status !== 'done' || (groupId && task.groupId !== groupId));
   writeTasks(tasks);
+  scheduleNextReminderCheck();
   broadcastTasks();
   return tasks;
 });
@@ -842,6 +877,30 @@ ipcMain.handle('settings:get', () => ({
   settings: currentSettings || readSettings(),
   shortcutStatus
 }));
+ipcMain.handle('reminders:test', () => {
+  const testTask = {
+    id: 'reminder-test',
+    title: '如果你看到这条消息，系统提醒工作正常。'
+  };
+  return new Promise((resolve) => {
+    const accepted = showSystemNotification(testTask, restoreMainWindow, (delivered, error) => {
+      resolve({
+        delivered,
+        error: error ? String(error.message || error) : ''
+      });
+    });
+    try {
+      shell.beep();
+    } catch (error) {
+      logApp('Failed to play test reminder sound', error);
+    }
+    logApp(`Test reminder requested; nativeAccepted=${accepted}`);
+    if (!accepted) {
+      resolve({ delivered: false, error: 'Windows 系统通知当前不可用' });
+    }
+  });
+});
+ipcMain.handle('settings:openNotificationSettings', () => shell.openExternal('ms-settings:notifications'));
 ipcMain.handle('settings:update', (_event, patch) => {
   const current = currentSettings || readSettings();
   const next = normalizeSettings({
@@ -864,6 +923,9 @@ app.whenReady().then(() => {
   createMainWindow();
   createTray();
   startReminderScheduler();
+  powerMonitor.on('resume', runReminderCheck);
+  powerMonitor.on('unlock-screen', runReminderCheck);
+  runReminderCheck();
 });
 
 app.on('activate', () => {
@@ -889,5 +951,7 @@ app.on('window-all-closed', (event) => {
 app.on('will-quit', () => {
   logApp('Will quit');
   globalShortcut.unregisterAll();
-  if (reminderTimer) clearInterval(reminderTimer);
+  if (reminderSafetyTimer) clearInterval(reminderSafetyTimer);
+  if (nextReminderTimer) clearTimeout(nextReminderTimer);
+  activeNotifications.clear();
 });

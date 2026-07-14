@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
+    "test": "node --test",
     "dist": "electron-builder --win portable",
     "pack:win": "electron-builder --win dir"
   },

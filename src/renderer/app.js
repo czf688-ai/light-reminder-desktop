@@ -24,7 +24,8 @@ const state = {
   },
   shortcutStatus: {},
   pendingDeleteGroupId: null,
-  isCollapsed: false
+  isCollapsed: false,
+  expandedTaskIds: new Set()
 };
 
 const elements = {
@@ -67,6 +68,8 @@ const elements = {
   shortcutToggleWindow: document.querySelector('#shortcutToggleWindow'),
   shortcutStatus: document.querySelector('#shortcutStatus'),
   saveSettings: document.querySelector('#saveSettings'),
+  testReminder: document.querySelector('#testReminder'),
+  openNotificationSettings: document.querySelector('#openNotificationSettings'),
   resetShortcuts: document.querySelector('#resetShortcuts'),
   quickInputHint: document.querySelector('#quickInputHint'),
   clipboardHint: document.querySelector('#clipboardHint'),
@@ -403,6 +406,7 @@ function renderTasks() {
     const reminderInput = node.querySelector('.task-reminder-input');
     const clearReminderButton = node.querySelector('.clear-reminder');
     const attachmentStrip = node.querySelector('.attachment-strip');
+    const detailsButton = node.querySelector('.toggle-task-details');
     const completeButton = node.querySelector('.complete-button');
     const pmStatusButton = node.querySelector('.pm-status-task');
     const attachButton = node.querySelector('.attach-task');
@@ -416,6 +420,7 @@ function renderTasks() {
     node.classList.toggle('is-waiting', task.pmStatus === 'waiting');
     node.classList.toggle('is-risk', task.pmStatus === 'risk');
     node.classList.toggle('is-highlighted', task.id === state.highlightedId);
+    node.classList.toggle('is-expanded', state.expandedTaskIds.has(task.id));
 
     title.value = task.title;
     groupSelect.innerHTML = '';
@@ -432,6 +437,10 @@ function renderTasks() {
     pmStatusButton.classList.toggle('is-waiting', task.pmStatus === 'waiting');
     pmStatusButton.classList.toggle('is-risk', task.pmStatus === 'risk');
     pinButton.classList.toggle('is-active', Boolean(task.pinned));
+    detailsButton.setAttribute('aria-expanded', String(state.expandedTaskIds.has(task.id)));
+    detailsButton.textContent = state.expandedTaskIds.has(task.id) ? '收起' : '•••';
+    detailsButton.title = state.expandedTaskIds.has(task.id) ? '收起任务操作' : '展开任务操作';
+    detailsButton.setAttribute('aria-label', detailsButton.title);
 
     const reminder = formatReminder(task.remindAt);
     const created = new Date(task.createdAt).toLocaleString('zh-CN', {
@@ -449,6 +458,17 @@ function renderTasks() {
     completeButton.addEventListener('click', () => {
       const status = task.status === 'done' ? 'todo' : 'done';
       api.updateTask(task.id, { status });
+    });
+
+    detailsButton.addEventListener('click', () => {
+      if (state.expandedTaskIds.has(task.id)) {
+        state.expandedTaskIds.delete(task.id);
+      } else {
+        state.expandedTaskIds.add(task.id);
+      }
+      renderTasks();
+      const activeTask = elements.list.querySelector(`[data-id="${task.id}"]`);
+      if (activeTask) activeTask.scrollIntoView({ block: 'nearest' });
     });
 
     title.addEventListener('keydown', (event) => {
@@ -498,6 +518,7 @@ function renderTasks() {
     });
 
     deleteButton.addEventListener('click', () => {
+      state.expandedTaskIds.delete(task.id);
       api.deleteTask(task.id);
     });
 
@@ -735,6 +756,21 @@ elements.settingsPanel.addEventListener('click', (event) => {
 });
 
 elements.saveSettings.addEventListener('click', saveSettingsFromForm);
+
+elements.testReminder.addEventListener('click', async () => {
+  const result = await api.testReminder();
+  const originalText = elements.testReminder.textContent;
+  elements.testReminder.textContent = result && result.delivered ? '通知正常' : '系统通知被关闭';
+  elements.testReminder.title = result && result.error ? result.error : '';
+  window.setTimeout(() => {
+    elements.testReminder.textContent = originalText;
+    elements.testReminder.title = '';
+  }, 2200);
+});
+
+elements.openNotificationSettings.addEventListener('click', () => {
+  api.openNotificationSettings();
+});
 
 elements.resetShortcuts.addEventListener('click', resetShortcutInputs);
 
