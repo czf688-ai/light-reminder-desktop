@@ -15,8 +15,8 @@ let currentSettings = null;
 let shortcutStatus = {};
 let expandedWindowBounds = null;
 let isWindowCollapsed = false;
-const MIN_WINDOW_WIDTH = 340;
-const MIN_WINDOW_HEIGHT = 460;
+const MIN_WINDOW_WIDTH = 760;
+const MIN_WINDOW_HEIGHT = 620;
 const COLLAPSED_WINDOW_HEIGHT = 46;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -63,6 +63,162 @@ function getSettingsFile() {
 
 function getAttachmentsDir() {
   return path.join(app.getPath('userData'), 'attachments');
+}
+
+function backupFolderName(prefix = '轻量提醒备份') {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+  return `${prefix}-${stamp}`;
+}
+
+function copyDataToDirectory(targetDir) {
+  ensureDir(targetDir);
+  const dataFiles = [
+    [getTasksFile(), []],
+    [getGroupsFile(), defaultGroups()],
+    [getSettingsFile(), defaultSettings()]
+  ];
+  for (const [file, fallback] of dataFiles) {
+    ensureDataFile(file, fallback);
+    fs.copyFileSync(file, path.join(targetDir, path.basename(file)));
+  }
+  const sourceAttachments = getAttachmentsDir();
+  if (fs.existsSync(sourceAttachments)) {
+    fs.cpSync(sourceAttachments, path.join(targetDir, 'attachments'), { recursive: true });
+  }
+  fs.writeFileSync(path.join(targetDir, 'backup-manifest.json'), JSON.stringify({
+    app: 'light-reminder-desktop',
+    version: 1,
+    createdAt: new Date().toISOString()
+  }, null, 2), 'utf8');
+}
+
+function validateBackupDirectory(dir) {
+  const tasksFile = path.join(dir, 'tasks.json');
+  const groupsFile = path.join(dir, 'groups.json');
+  const settingsFile = path.join(dir, 'settings.json');
+  if (![tasksFile, groupsFile, settingsFile].every((file) => fs.existsSync(file))) {
+    throw new Error('未找到完整备份文件，请选择包含 tasks.json、groups.json 和 settings.json 的备份文件夹。');
+  }
+  const tasks = parseJson(fs.readFileSync(tasksFile, 'utf8'), null);
+  const groups = parseJson(fs.readFileSync(groupsFile, 'utf8'), null);
+  const settings = parseJson(fs.readFileSync(settingsFile, 'utf8'), null);
+  if (!Array.isArray(tasks) || !Array.isArray(groups) || !settings || typeof settings !== 'object') {
+    throw new Error('备份文件格式不正确，未执行恢复。');
+  }
+}
+
+function restoreDataFromDirectory(sourceDir) {
+  validateBackupDirectory(sourceDir);
+  const safetyRoot = path.join(app.getPath('userData'), 'restore-safety');
+  const safetyCopy = path.join(safetyRoot, backupFolderName('恢复前备份'));
+  copyDataToDirectory(safetyCopy);
+
+  fs.copyFileSync(path.join(sourceDir, 'tasks.json'), getTasksFile());
+  fs.copyFileSync(path.join(sourceDir, 'groups.json'), getGroupsFile());
+  fs.copyFileSync(path.join(sourceDir, 'settings.json'), getSettingsFile());
+
+  const attachmentTarget = getAttachmentsDir();
+  fs.rmSync(attachmentTarget, { recursive: true, force: true });
+  const attachmentSource = path.join(sourceDir, 'attachments');
+  if (fs.existsSync(attachmentSource)) {
+    fs.cpSync(attachmentSource, attachmentTarget, { recursive: true });
+  }
+
+  const restoredTasks = readTasks().map((task) => ({
+    ...task,
+    attachments: (task.attachments || []).map((attachment) => {
+      const fileName = path.basename(attachment.path || attachment.name || '');
+      const restoredPath = fileName ? path.join(attachmentTarget, fileName) : attachment.path;
+      return {
+        ...attachment,
+        path: restoredPath,
+        url: restoredPath && fs.existsSync(restoredPath) ? pathToFileURL(restoredPath).href : attachment.url
+      };
+    })
+  }));
+  writeTasks(restoredTasks);
+  readGroups();
+  currentSettings = readSettings();
+  applyRuntimeSettings(currentSettings);
+  activeGroupId = DEFAULT_GROUP_ID;
+  scheduleNextReminderCheck();
+  broadcastGroups();
+  broadcastTasks();
+  return safetyCopy;
+}
+
+function exportTimestamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+}
+
+function safeExportValue(value) {
+  const text = String(value ?? '');
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
+function formatTaskStatus(task) {
+  if (task.archivedAt) return '已归档';
+  if (task.status === 'done') return '已完成';
+  if (task.pmStatus === 'waiting') return '等反馈';
+  if (task.pmStatus === 'risk') return '风险';
+  return '待办';
+}
+
+function buildTasksCsv(tasks, groups) {
+  const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+  const header = ['任务', '分组', '状态', '提醒时间', '创建时间', '归档时间', '图片数量'];
+  const rows = tasks.map((task) => [
+    task.title,
+    groupNames.get(task.groupId) || '收集箱',
+    formatTaskStatus(task),
+    task.remindAt || '',
+    task.createdAt || '',
+    task.archivedAt || '',
+    Array.isArray(task.attachments) ? task.attachments.length : 0
+  ]);
+  return `\uFEFF${[header, ...rows].map((row) => row
+    .map((value) => `"${safeExportValue(value).replace(/"/g, '""')}"`).join(','))
+    .join('\r\n')}`;
+}
+
+function buildTasksMarkdown(tasks, groups) {
+  const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+  const escapeCell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  const lines = [
+    '# 轻量提醒任务导出',
+    '',
+    `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    '',
+    '| 任务 | 分组 | 状态 | 提醒时间 | 创建时间 | 图片 |',
+    '| --- | --- | --- | --- | --- | --- |'
+  ];
+  for (const task of tasks) {
+    lines.push(`| ${escapeCell(task.title)} | ${escapeCell(groupNames.get(task.groupId) || '收集箱')} | ${formatTaskStatus(task)} | ${escapeCell(task.remindAt)} | ${escapeCell(task.createdAt)} | ${Array.isArray(task.attachments) ? task.attachments.length : 0} |`);
+  }
+  return lines.join('\r\n');
+}
+
+async function exportTasks(format) {
+  const normalizedFormat = format === 'markdown' ? 'markdown' : 'csv';
+  const extension = normalizedFormat === 'markdown' ? 'md' : 'csv';
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出任务',
+    defaultPath: `轻量提醒任务-${exportTimestamp()}.${extension}`,
+    filters: [{ name: normalizedFormat === 'markdown' ? 'Markdown 文件' : 'CSV 文件', extensions: [extension] }]
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  try {
+    const tasks = readTasks();
+    const groups = readGroups();
+    const content = normalizedFormat === 'markdown'
+      ? buildTasksMarkdown(tasks, groups)
+      : buildTasksCsv(tasks, groups);
+    fs.writeFileSync(result.filePath, content, 'utf8');
+    return { ok: true, path: result.filePath };
+  } catch (error) {
+    logApp('Failed to export tasks', error);
+    return { ok: false, error: '导出失败，请确认目标文件可写。' };
+  }
 }
 
 function ensureDir(dir) {
@@ -179,6 +335,8 @@ function normalizeTask(task) {
     ...task,
     groupId: task.groupId || DEFAULT_GROUP_ID,
     pmStatus: task.pmStatus || 'normal',
+    flagged: Boolean(task.flagged),
+    archivedAt: task.archivedAt || null,
     attachments: Array.isArray(task.attachments) ? task.attachments : []
   };
 }
@@ -270,6 +428,7 @@ function createTask(input = {}) {
     priority: 'normal',
     pmStatus: input.pmStatus || 'normal',
     pinned: false,
+    flagged: false,
     groupId,
     attachments: Array.isArray(input.attachments) ? input.attachments : [],
     remindAt: input.remindAt || parseReminder(title),
@@ -487,8 +646,8 @@ function createTrayIcon() {
 function createMainWindow() {
   const display = screen.getPrimaryDisplay();
   const { x, y, width, height } = display.workArea;
-  const windowWidth = 390;
-  const windowHeight = Math.min(680, height - 48);
+  const windowWidth = Math.min(980, width - 48);
+  const windowHeight = Math.min(900, height - 48);
   const settings = currentSettings || readSettings();
 
   mainWindow = new BrowserWindow({
@@ -564,7 +723,7 @@ function setWindowCollapsed(value) {
     mainWindow.setMinimumSize(MIN_WINDOW_WIDTH, COLLAPSED_WINDOW_HEIGHT);
     mainWindow.setBounds({ ...bounds, height: COLLAPSED_WINDOW_HEIGHT }, true);
   } else {
-    const defaultHeight = Math.min(680, screen.getPrimaryDisplay().workArea.height - 48);
+    const defaultHeight = Math.min(900, screen.getPrimaryDisplay().workArea.height - 48);
     const nextBounds = expandedWindowBounds || { ...bounds, height: defaultHeight };
     mainWindow.setBounds({ ...nextBounds, height: Math.max(nextBounds.height, MIN_WINDOW_HEIGHT) }, true);
     mainWindow.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
@@ -823,7 +982,7 @@ ipcMain.handle('tasks:create', (_event, input) => createTask(input));
 ipcMain.handle('tasks:update', (_event, id, patch) => updateTask(id, patch));
 ipcMain.handle('tasks:delete', (_event, id) => deleteTask(id));
 ipcMain.handle('tasks:clearCompleted', (_event, groupId) => {
-  const tasks = readTasks().filter((task) => task.status !== 'done' || (groupId && task.groupId !== groupId));
+  const tasks = readTasks().filter((task) => task.archivedAt || task.status !== 'done' || (groupId && task.groupId !== groupId));
   writeTasks(tasks);
   scheduleNextReminderCheck();
   broadcastTasks();
@@ -863,6 +1022,18 @@ ipcMain.handle('attachments:open', (_event, attachmentPath) => {
 ipcMain.handle('window:hide', () => {
   if (mainWindow) mainWindow.hide();
 });
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow) mainWindow.minimize();
+});
+ipcMain.handle('window:toggleMaximize', () => {
+  if (!mainWindow) return false;
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+    return false;
+  }
+  mainWindow.maximize();
+  return true;
+});
 ipcMain.handle('window:toggleCollapsed', () => toggleCollapsedWindow());
 ipcMain.handle('window:toggleAlwaysOnTop', (_event, value) => {
   if (!mainWindow) return false;
@@ -901,6 +1072,53 @@ ipcMain.handle('reminders:test', () => {
   });
 });
 ipcMain.handle('settings:openNotificationSettings', () => shell.openExternal('ms-settings:notifications'));
+ipcMain.handle('data:backup', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择备份保存位置',
+    buttonLabel: '备份到此处',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  try {
+    const backupDir = path.join(result.filePaths[0], backupFolderName());
+    copyDataToDirectory(backupDir);
+    return { ok: true, path: backupDir };
+  } catch (error) {
+    logApp('Failed to back up data', error);
+    return { ok: false, error: '备份失败，请确认目标文件夹可写。' };
+  }
+});
+ipcMain.handle('data:exportTasks', (_event, format) => exportTasks(format));
+ipcMain.handle('data:restore', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择要恢复的备份文件夹',
+    buttonLabel: '恢复此备份',
+    properties: ['openDirectory']
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  try {
+    validateBackupDirectory(result.filePaths[0]);
+  } catch (error) {
+    return { ok: false, error: error.message || '备份文件无效。' };
+  }
+  const confirmation = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['取消', '确认恢复'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '确认恢复数据',
+    message: '恢复会替换当前任务、分组、设置和图片附件。',
+    detail: '当前数据会先自动保留一份“恢复前备份”。'
+  });
+  if (confirmation.response !== 1) return { canceled: true };
+  try {
+    const safetyPath = restoreDataFromDirectory(result.filePaths[0]);
+    return { ok: true, safetyPath };
+  } catch (error) {
+    logApp('Failed to restore data', error);
+    return { ok: false, error: error.message || '恢复失败，当前数据未完成替换。' };
+  }
+});
 ipcMain.handle('settings:update', (_event, patch) => {
   const current = currentSettings || readSettings();
   const next = normalizeSettings({

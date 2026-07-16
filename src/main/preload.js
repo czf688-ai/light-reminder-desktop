@@ -19,12 +19,17 @@ contextBridge.exposeInMainWorld('reminderApi', {
   openAttachment: (attachmentPath) => ipcRenderer.invoke('attachments:open', attachmentPath),
   rendererReady: () => ipcRenderer.invoke('renderer:ready'),
   hideWindow: () => ipcRenderer.invoke('window:hide'),
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggleMaximize'),
   toggleCollapsed: () => ipcRenderer.invoke('window:toggleCollapsed'),
   toggleAlwaysOnTop: (value) => ipcRenderer.invoke('window:toggleAlwaysOnTop', value),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
   testReminder: () => ipcRenderer.invoke('reminders:test'),
   openNotificationSettings: () => ipcRenderer.invoke('settings:openNotificationSettings'),
+  backupData: () => ipcRenderer.invoke('data:backup'),
+  restoreData: () => ipcRenderer.invoke('data:restore'),
+  exportTasks: (format) => ipcRenderer.invoke('data:exportTasks', format),
   onTasksChanged: (callback) => {
     const listener = (_event, tasks) => callback(tasks);
     ipcRenderer.on('tasks:changed', listener);

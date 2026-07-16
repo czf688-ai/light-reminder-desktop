@@ -1,7 +1,7 @@
 {
   "name": "light-reminder-desktop",
   "version": "0.1.0",
-  "description": "A lightweight desktop reminder app for quick task capture.",
+  "description": "A lightweight Windows desktop task capture and reminder app with local backup, archive, and export.",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
@@ -45,5 +45,8 @@
   "devDependencies": {
     "electron": "^31.7.7",
     "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "bootstrap-icons": "^1.13.1"
   }
 }

@@ -7,6 +7,8 @@ const state = {
   groups: [],
   activeGroupId: DEFAULT_GROUP_ID,
   filter: 'todo',
+  sidebarView: 'group',
+  isSidebarCollapsed: false,
   groupEditorMode: null,
   dueReminders: [],
   highlightedId: null,
@@ -25,7 +27,12 @@ const state = {
   shortcutStatus: {},
   pendingDeleteGroupId: null,
   isCollapsed: false,
-  expandedTaskIds: new Set()
+  expandedTaskIds: new Set(),
+  collapsedLeadTaskIds: new Set(),
+  groupClickTimer: null,
+  contextGroupId: null,
+  draggedTaskId: null,
+  searchQuery: ''
 };
 
 const elements = {
@@ -34,6 +41,29 @@ const elements = {
   list: document.querySelector('#taskList'),
   count: document.querySelector('#taskCount'),
   groupTabs: document.querySelector('#groupTabs'),
+  sidebarToggle: document.querySelector('#sidebarToggle'),
+  taskSearch: document.querySelector('#taskSearch'),
+  groupContextMenu: document.querySelector('#groupContextMenu'),
+  groupContextRename: document.querySelector('#groupContextRename'),
+  groupContextDelete: document.querySelector('#groupContextDelete'),
+  showAllTasks: document.querySelector('#showAllTasks'),
+  showCompletedTasks: document.querySelector('#showCompletedTasks'),
+  showArchivedTasks: document.querySelector('#showArchivedTasks'),
+  showTodoTasks: document.querySelector('#showTodoTasks'),
+  showOverdueTasks: document.querySelector('#showOverdueTasks'),
+  showRiskTasks: document.querySelector('#showRiskTasks'),
+  showWaitingTasks: document.querySelector('#showWaitingTasks'),
+  showFavorites: document.querySelector('#showFavorites'),
+  showFlagged: document.querySelector('#showFlagged'),
+  allTaskCount: document.querySelector('#allTaskCount'),
+  completedTaskCount: document.querySelector('#completedTaskCount'),
+  archivedTaskCount: document.querySelector('#archivedTaskCount'),
+  todoTaskCount: document.querySelector('#todoTaskCount'),
+  overdueTaskCount: document.querySelector('#overdueTaskCount'),
+  riskTaskCount: document.querySelector('#riskTaskCount'),
+  waitingTaskCount: document.querySelector('#waitingTaskCount'),
+  favoriteTaskCount: document.querySelector('#favoriteTaskCount'),
+  flaggedTaskCount: document.querySelector('#flaggedTaskCount'),
   addGroup: document.querySelector('#addGroup'),
   renameGroup: document.querySelector('#renameGroup'),
   deleteGroup: document.querySelector('#deleteGroup'),
@@ -54,6 +84,7 @@ const elements = {
   hideWindow: document.querySelector('#hideWindow'),
   pinToggle: document.querySelector('#pinToggle'),
   collapseWindow: document.querySelector('#collapseWindow'),
+  maximizeWindow: document.querySelector('#maximizeWindow'),
   settingsToggle: document.querySelector('#settingsToggle'),
   settingsPanel: document.querySelector('#settingsPanel'),
   closeSettings: document.querySelector('#closeSettings'),
@@ -71,6 +102,11 @@ const elements = {
   testReminder: document.querySelector('#testReminder'),
   openNotificationSettings: document.querySelector('#openNotificationSettings'),
   resetShortcuts: document.querySelector('#resetShortcuts'),
+  backupData: document.querySelector('#backupData'),
+  restoreData: document.querySelector('#restoreData'),
+  exportCsv: document.querySelector('#exportCsv'),
+  exportMarkdown: document.querySelector('#exportMarkdown'),
+  backupStatus: document.querySelector('#backupStatus'),
   quickInputHint: document.querySelector('#quickInputHint'),
   clipboardHint: document.querySelector('#clipboardHint'),
   filters: Array.from(document.querySelectorAll('.filter')),
@@ -113,10 +149,9 @@ function mergeSettings(settings) {
 }
 
 function renderGroupControls() {
-  const isInbox = state.activeGroupId === DEFAULT_GROUP_ID;
-  elements.renameGroup.disabled = isInbox;
-  elements.deleteGroup.disabled = isInbox;
-  if (isInbox) closeDeleteGroupConfirm();
+  elements.renameGroup.disabled = false;
+  elements.deleteGroup.disabled = state.activeGroupId === DEFAULT_GROUP_ID;
+  if (state.activeGroupId === DEFAULT_GROUP_ID) closeDeleteGroupConfirm();
 }
 
 function formatShortcutForDisplay(value) {
@@ -167,6 +202,12 @@ function renderCollapsedState() {
   elements.collapseWindow.textContent = state.isCollapsed ? '+' : '-';
   elements.collapseWindow.title = state.isCollapsed ? '展开窗口' : '折叠窗口';
   elements.collapseWindow.setAttribute('aria-label', state.isCollapsed ? '展开窗口' : '折叠窗口');
+}
+
+function renderSidebarState() {
+  document.body.classList.toggle('is-sidebar-collapsed', state.isSidebarCollapsed);
+  elements.sidebarToggle.title = state.isSidebarCollapsed ? '展开侧边栏' : '收起侧边栏';
+  elements.sidebarToggle.setAttribute('aria-label', elements.sidebarToggle.title);
 }
 
 function countOpenTasks(groupId) {
@@ -224,7 +265,7 @@ function isOverdue(task) {
 function sortTasks(tasks) {
   return [...tasks].sort((a, b) => {
     if (a.status !== b.status) return a.status === 'todo' ? -1 : 1;
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if (a.flagged !== b.flagged) return a.flagged ? -1 : 1;
     const aTime = a.remindAt ? Date.parse(a.remindAt) : Number.MAX_SAFE_INTEGER;
     const bTime = b.remindAt ? Date.parse(b.remindAt) : Number.MAX_SAFE_INTEGER;
     if (aTime !== bTime) return aTime - bTime;
@@ -233,19 +274,79 @@ function sortTasks(tasks) {
 }
 
 function getVisibleTasks() {
-  const groupTasks = state.tasks.filter((task) => (task.groupId || DEFAULT_GROUP_ID) === state.activeGroupId);
-  const sorted = sortTasks(groupTasks);
-  if (state.filter === 'all') return sorted;
-  if (state.filter === 'overdue') return sorted.filter((task) => isOverdue(task));
-  if (state.filter === 'waiting') return sorted.filter((task) => task.status !== 'done' && task.pmStatus === 'waiting');
-  if (state.filter === 'risk') return sorted.filter((task) => task.status !== 'done' && task.pmStatus === 'risk');
-  return sorted.filter((task) => task.status === state.filter);
+  const isArchiveView = state.sidebarView === 'archived';
+  const taskSource = state.sidebarView === 'group'
+    ? state.tasks.filter((task) => !task.archivedAt && (task.groupId || DEFAULT_GROUP_ID) === state.activeGroupId)
+    : state.tasks.filter((task) => isArchiveView ? Boolean(task.archivedAt) : !task.archivedAt);
+  const sorted = sortTasks(taskSource);
+  const filtered = state.filter === 'all' ? sorted
+    : state.filter === 'overdue' ? sorted.filter((task) => isOverdue(task))
+      : state.filter === 'waiting' ? sorted.filter((task) => task.status !== 'done' && task.pmStatus === 'waiting')
+        : state.filter === 'risk' ? sorted.filter((task) => task.status !== 'done' && task.pmStatus === 'risk')
+          : state.filter === 'favorites' ? sorted.filter((task) => Boolean(task.pinned))
+            : state.filter === 'flagged' ? sorted.filter((task) => Boolean(task.flagged))
+              : state.filter === 'archived' ? sorted
+                : sorted.filter((task) => task.status === state.filter);
+  const query = state.searchQuery.trim().toLocaleLowerCase('zh-CN');
+  if (!query) return filtered;
+  return filtered.filter((task) => [task.title, task.sourceText, task.remindAt]
+    .some((value) => String(value || '').toLocaleLowerCase('zh-CN').includes(query)));
 }
 
 function updateCount() {
-  const todoCount = countOpenTasks(state.activeGroupId);
   const group = getActiveGroup();
-  elements.count.textContent = `${group ? group.name : '收集箱'} · ${todoCount} 项待办`;
+  const viewLabel = state.sidebarView === 'all' ? '全部任务'
+    : state.sidebarView === 'completed' ? '已完成'
+      : state.sidebarView === 'archived' ? '归档'
+      : state.sidebarView === 'favorites' ? '收藏'
+        : state.sidebarView === 'flagged' ? '标记'
+        : state.sidebarView === 'labels' ? '标签筛选'
+          : (group ? group.name : '收集箱');
+  elements.count.textContent = `${viewLabel} · ${getVisibleTasks().length} 项任务`;
+}
+
+function updateSidebarCounts() {
+  const activeTasks = state.tasks.filter((task) => !task.archivedAt);
+  const todoTasks = activeTasks.filter((task) => task.status !== 'done');
+  elements.allTaskCount.textContent = String(activeTasks.length);
+  elements.completedTaskCount.textContent = String(activeTasks.filter((task) => task.status === 'done').length);
+  elements.archivedTaskCount.textContent = String(state.tasks.filter((task) => task.archivedAt).length);
+  elements.todoTaskCount.textContent = String(todoTasks.length);
+  elements.overdueTaskCount.textContent = String(todoTasks.filter((task) => isOverdue(task)).length);
+  elements.riskTaskCount.textContent = String(todoTasks.filter((task) => task.pmStatus === 'risk').length);
+  elements.waitingTaskCount.textContent = String(todoTasks.filter((task) => task.pmStatus === 'waiting').length);
+  elements.favoriteTaskCount.textContent = String(activeTasks.filter((task) => task.pinned).length);
+  elements.flaggedTaskCount.textContent = String(activeTasks.filter((task) => task.flagged).length);
+
+  const activeId = state.sidebarView === 'all' ? 'showAllTasks'
+    : state.sidebarView === 'completed' ? 'showCompletedTasks'
+      : state.sidebarView === 'archived' ? 'showArchivedTasks'
+      : state.sidebarView === 'favorites' ? 'showFavorites'
+        : state.sidebarView === 'flagged' ? 'showFlagged'
+        : state.sidebarView === 'labels' && state.filter === 'todo' ? 'showTodoTasks'
+          : state.sidebarView === 'labels' && state.filter === 'overdue' ? 'showOverdueTasks'
+            : state.sidebarView === 'labels' && state.filter === 'waiting' ? 'showWaitingTasks'
+              : state.sidebarView === 'labels' && state.filter === 'risk' ? 'showRiskTasks'
+        : '';
+  for (const element of [
+    elements.showAllTasks,
+    elements.showCompletedTasks,
+    elements.showArchivedTasks,
+    elements.showFavorites,
+    elements.showFlagged,
+    elements.showTodoTasks,
+    elements.showOverdueTasks,
+    elements.showWaitingTasks,
+    elements.showRiskTasks
+  ]) {
+    element.classList.toggle('is-active', element.id === activeId);
+  }
+}
+
+function syncFilterButtons() {
+  for (const item of elements.filters) {
+    item.classList.toggle('is-active', item.dataset.filter === state.filter);
+  }
 }
 
 function openDeleteGroupConfirm() {
@@ -270,24 +371,164 @@ async function confirmDeleteGroup() {
   await refreshAll();
 }
 
+async function selectGroup(groupId) {
+  state.activeGroupId = groupId;
+  state.sidebarView = 'group';
+  state.filter = 'todo';
+  await api.setActiveGroup(groupId);
+  renderTasks();
+  elements.input.focus();
+}
+
+function closeGroupContextMenu() {
+  state.contextGroupId = null;
+  elements.groupContextMenu.classList.add('is-hidden');
+}
+
+function openGroupContextMenu(group, event) {
+  state.contextGroupId = group.id;
+  elements.groupContextDelete.disabled = group.id === DEFAULT_GROUP_ID;
+  elements.groupContextMenu.style.left = `${Math.min(event.clientX, window.innerWidth - 128)}px`;
+  elements.groupContextMenu.style.top = `${Math.min(event.clientY, window.innerHeight - 92)}px`;
+  elements.groupContextMenu.classList.remove('is-hidden');
+}
+
+function getDraggedTaskId(event) {
+  return state.draggedTaskId || (event.dataTransfer && event.dataTransfer.getData('text/plain'));
+}
+
+async function moveTaskToGroup(taskId, groupId) {
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (!task || (task.groupId || DEFAULT_GROUP_ID) === groupId) return;
+  await api.updateTask(taskId, { groupId });
+}
+
+function getGroupIconClass(group) {
+  if (group.id === DEFAULT_GROUP_ID) return 'group-symbol--inbox';
+  const iconClasses = [
+    'group-symbol--branch',
+    'group-symbol--chat',
+    'group-symbol--person',
+    'group-symbol--collection'
+  ];
+  const index = Math.max(0, state.groups.findIndex((item) => item.id === group.id) - 1);
+  return iconClasses[index % iconClasses.length];
+}
+
 function renderGroups() {
   elements.groupTabs.innerHTML = '';
   renderGroupControls();
   for (const group of state.groups) {
+    const row = document.createElement('div');
+    row.className = 'group-row';
+    row.classList.toggle('is-active', state.sidebarView === 'group' && group.id === state.activeGroupId);
+    row.classList.toggle('is-renaming', state.sidebarView === 'group' && group.id === state.activeGroupId && state.groupEditorMode === 'rename');
+    row.dataset.groupId = group.id;
+    row.addEventListener('dragenter', (event) => {
+      if (!getDraggedTaskId(event)) return;
+      event.preventDefault();
+      row.classList.add('is-drop-target');
+    });
+    row.addEventListener('dragover', (event) => {
+      if (!getDraggedTaskId(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      row.classList.add('is-drop-target');
+    });
+    row.addEventListener('dragleave', (event) => {
+      if (!row.contains(event.relatedTarget)) row.classList.remove('is-drop-target');
+    });
+    row.addEventListener('drop', async (event) => {
+      const taskId = getDraggedTaskId(event);
+      if (!taskId) return;
+      event.preventDefault();
+      row.classList.remove('is-drop-target');
+      await moveTaskToGroup(taskId, group.id);
+    });
+
+    const isInlineEditing = state.groupEditorMode === 'rename' && group.id === state.activeGroupId;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'group-tab';
-    button.classList.toggle('is-active', group.id === state.activeGroupId);
-    button.textContent = `${group.name} ${countOpenTasks(group.id)}`;
+    button.classList.toggle('is-active', state.sidebarView === 'group' && group.id === state.activeGroupId);
+    const icons = ['⌘', '◌', '◍', '◇', '✳'];
+    const icon = document.createElement('span');
+    icon.className = `group-symbol ${getGroupIconClass(group)}`;
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = group.id === DEFAULT_GROUP_ID ? '▱' : icons[state.groups.findIndex((item) => item.id === group.id) % icons.length];
+    const name = document.createElement('span');
+    name.className = 'group-name';
+    name.textContent = group.name;
+    const count = document.createElement('strong');
+    count.className = 'group-count';
+    count.textContent = String(countOpenTasks(group.id));
+    button.replaceChildren(icon, name, count);
     button.title = group.name;
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', () => {
+      if (state.groupClickTimer) window.clearTimeout(state.groupClickTimer);
+      state.groupClickTimer = window.setTimeout(() => {
+        state.groupClickTimer = null;
+        selectGroup(group.id);
+      }, 210);
+    });
+    button.addEventListener('dblclick', async (event) => {
+      event.preventDefault();
+      if (state.groupClickTimer) window.clearTimeout(state.groupClickTimer);
+      state.groupClickTimer = null;
       state.activeGroupId = group.id;
+      state.sidebarView = 'group';
+      await api.setActiveGroup(group.id);
+      openGroupEditor('rename');
+    });
+    button.addEventListener('contextmenu', async (event) => {
+      event.preventDefault();
+      if (state.groupClickTimer) window.clearTimeout(state.groupClickTimer);
+      state.groupClickTimer = null;
+      state.activeGroupId = group.id;
+      state.sidebarView = 'group';
       await api.setActiveGroup(group.id);
       renderGroups();
-      renderTasks();
-      elements.input.focus();
+      openGroupContextMenu(group, event);
     });
-    elements.groupTabs.appendChild(button);
+
+    if (isInlineEditing) {
+      const inlineIcon = icon.cloneNode(true);
+      const inlineInput = document.createElement('input');
+      inlineInput.type = 'text';
+      inlineInput.className = 'group-inline-name';
+      inlineInput.value = group.name;
+      inlineInput.setAttribute('aria-label', '分组名称');
+      inlineInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveInlineGroupName(inlineInput.value);
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeGroupEditor();
+        }
+      });
+      inlineInput.addEventListener('blur', () => saveInlineGroupName(inlineInput.value));
+      row.append(inlineIcon, inlineInput, count);
+    } else {
+      row.appendChild(button);
+    }
+
+    if (group.id !== DEFAULT_GROUP_ID) {
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'group-delete-button';
+      deleteButton.title = `删除分组 ${group.name}`;
+      deleteButton.setAttribute('aria-label', deleteButton.title);
+      deleteButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        state.activeGroupId = group.id;
+        openDeleteGroupConfirm();
+      });
+      row.appendChild(deleteButton);
+    }
+
+    elements.groupTabs.appendChild(row);
   }
 }
 
@@ -308,7 +549,7 @@ function renderAttachments(container, task) {
   const attachments = Array.isArray(task.attachments) ? task.attachments : [];
   if (attachments.length === 0) return;
 
-  for (const attachment of attachments) {
+  for (const attachment of attachments.slice(0, 1)) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'attachment-thumb';
@@ -389,6 +630,8 @@ function renderReminderPanel() {
 
 function renderTasks() {
   updateCount();
+  updateSidebarCounts();
+  syncFilterButtons();
   renderGroups();
   const visibleTasks = getVisibleTasks();
   elements.list.innerHTML = '';
@@ -398,29 +641,34 @@ function renderTasks() {
     return;
   }
 
-  for (const task of visibleTasks) {
+  for (const [index, task] of visibleTasks.entries()) {
     const node = elements.template.content.firstElementChild.cloneNode(true);
     const title = node.querySelector('.task-title');
     const meta = node.querySelector('.task-meta');
     const groupSelect = node.querySelector('.task-group-select');
     const reminderInput = node.querySelector('.task-reminder-input');
     const clearReminderButton = node.querySelector('.clear-reminder');
-    const attachmentStrip = node.querySelector('.attachment-strip');
+    const attachmentStrip = node.querySelector('.task-thumbnail');
     const detailsButton = node.querySelector('.toggle-task-details');
     const completeButton = node.querySelector('.complete-button');
     const pmStatusButton = node.querySelector('.pm-status-task');
     const attachButton = node.querySelector('.attach-task');
-    const pinButton = node.querySelector('.pin-task');
+    const favoriteButton = node.querySelector('.favorite-task');
+    const flagButton = node.querySelector('.flag-task');
     const snoozeButton = node.querySelector('.snooze-task');
     const deleteButton = node.querySelector('.delete-task');
 
     node.dataset.id = task.id;
+    node.draggable = true;
     node.classList.toggle('is-done', task.status === 'done');
     node.classList.toggle('is-overdue', isOverdue(task));
     node.classList.toggle('is-waiting', task.pmStatus === 'waiting');
     node.classList.toggle('is-risk', task.pmStatus === 'risk');
     node.classList.toggle('is-highlighted', task.id === state.highlightedId);
-    node.classList.toggle('is-expanded', state.expandedTaskIds.has(task.id));
+    const isLeadTask = Boolean(task.flagged);
+    const isLeadExpanded = state.expandedTaskIds.has(task.id);
+    node.classList.toggle('is-lead-task', isLeadTask);
+    node.classList.toggle('is-expanded', state.expandedTaskIds.has(task.id) || isLeadExpanded);
 
     title.value = task.title;
     groupSelect.innerHTML = '';
@@ -433,13 +681,33 @@ function renderTasks() {
     }
     reminderInput.value = toDateTimeLocalValue(task.remindAt);
     pmStatusButton.textContent = task.pmStatus === 'risk' ? '险' : task.pmStatus === 'waiting' ? '等' : '待';
+    pmStatusButton.dataset.statusLabel = task.pmStatus === 'risk'
+      ? '风险'
+      : task.pmStatus === 'waiting' ? '等反馈' : '待办';
     pmStatusButton.title = `当前：${getPmStatusLabel(task.pmStatus)}。点击切换。`;
     pmStatusButton.classList.toggle('is-waiting', task.pmStatus === 'waiting');
     pmStatusButton.classList.toggle('is-risk', task.pmStatus === 'risk');
-    pinButton.classList.toggle('is-active', Boolean(task.pinned));
-    detailsButton.setAttribute('aria-expanded', String(state.expandedTaskIds.has(task.id)));
-    detailsButton.textContent = state.expandedTaskIds.has(task.id) ? '收起' : '•••';
-    detailsButton.title = state.expandedTaskIds.has(task.id) ? '收起任务操作' : '展开任务操作';
+    favoriteButton.classList.toggle('is-active', Boolean(task.pinned));
+    favoriteButton.textContent = task.pinned ? '★' : '☆';
+    favoriteButton.title = task.pinned ? '取消收藏任务' : '收藏任务';
+    favoriteButton.setAttribute('aria-label', favoriteButton.title);
+    flagButton.classList.toggle('is-active', Boolean(task.flagged));
+    flagButton.title = task.flagged ? '取消标记任务' : '标记并置顶任务';
+    flagButton.setAttribute('aria-label', flagButton.title);
+    snoozeButton.classList.toggle('is-archive-action', Boolean(task.archivedAt) || task.status === 'done');
+    if (task.archivedAt) {
+      snoozeButton.textContent = '恢复';
+      snoozeButton.title = '恢复到已完成';
+      snoozeButton.setAttribute('aria-label', snoozeButton.title);
+    } else if (task.status === 'done') {
+      snoozeButton.textContent = '归档';
+      snoozeButton.title = '归档此已完成任务';
+      snoozeButton.setAttribute('aria-label', snoozeButton.title);
+    }
+    const isExpanded = state.expandedTaskIds.has(task.id) || isLeadExpanded;
+    detailsButton.setAttribute('aria-expanded', String(isExpanded));
+    detailsButton.textContent = isExpanded ? '收起' : '•••';
+    detailsButton.title = isExpanded ? '收起任务操作' : '展开任务操作';
     detailsButton.setAttribute('aria-label', detailsButton.title);
 
     const reminder = formatReminder(task.remindAt);
@@ -455,9 +723,30 @@ function renderTasks() {
     meta.textContent = reminder ? `提醒 ${reminder}${statusText}${imageCount}` : `创建 ${created}${statusText}${imageCount}`;
     renderAttachments(attachmentStrip, task);
 
+    node.addEventListener('dragstart', (event) => {
+      if (event.target.closest('button, input, select, .task-details, .attachment-thumb')) {
+        event.preventDefault();
+        return;
+      }
+      state.draggedTaskId = task.id;
+      node.classList.add('is-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', task.id);
+      }
+    });
+
+    node.addEventListener('dragend', () => {
+      state.draggedTaskId = null;
+      node.classList.remove('is-dragging');
+      document.querySelectorAll('.group-row.is-drop-target').forEach((item) => {
+        item.classList.remove('is-drop-target');
+      });
+    });
+
     completeButton.addEventListener('click', () => {
       const status = task.status === 'done' ? 'todo' : 'done';
-      api.updateTask(task.id, { status });
+      api.updateTask(task.id, { status, archivedAt: status === 'todo' ? null : task.archivedAt });
     });
 
     detailsButton.addEventListener('click', () => {
@@ -472,11 +761,24 @@ function renderTasks() {
     });
 
     title.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') title.blur();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        title.blur();
+      }
       if (event.key === 'Escape') {
         title.value = task.title;
         title.blur();
       }
+    });
+
+    title.addEventListener('focus', () => {
+      title.style.height = 'auto';
+      title.style.height = `${title.scrollHeight}px`;
+    });
+
+    title.addEventListener('input', () => {
+      title.style.height = 'auto';
+      title.style.height = `${title.scrollHeight}px`;
     });
 
     title.addEventListener('blur', () => {
@@ -486,6 +788,7 @@ function renderTasks() {
       } else {
         title.value = task.title;
       }
+      title.style.height = '';
     });
 
     groupSelect.addEventListener('change', () => {
@@ -508,11 +811,23 @@ function renderTasks() {
       await api.attachImagesToTask(task.id);
     });
 
-    pinButton.addEventListener('click', () => {
+    favoriteButton.addEventListener('click', () => {
       api.updateTask(task.id, { pinned: !task.pinned });
     });
 
+    flagButton.addEventListener('click', () => {
+      api.updateTask(task.id, { flagged: !task.flagged });
+    });
+
     snoozeButton.addEventListener('click', () => {
+      if (task.archivedAt) {
+        api.updateTask(task.id, { archivedAt: null });
+        return;
+      }
+      if (task.status === 'done') {
+        api.updateTask(task.id, { archivedAt: new Date().toISOString() });
+        return;
+      }
       const remindAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
       api.updateTask(task.id, { remindAt });
     });
@@ -538,6 +853,8 @@ function highlightTask(id) {
   const task = state.tasks.find((item) => item.id === id);
   if (task && task.groupId && task.groupId !== state.activeGroupId) {
     state.activeGroupId = task.groupId;
+    state.sidebarView = 'group';
+    state.filter = 'todo';
     api.setActiveGroup(task.groupId);
   }
   state.highlightedId = id;
@@ -569,9 +886,22 @@ async function refreshAll() {
 function openGroupEditor(mode) {
   const group = getActiveGroup();
   state.groupEditorMode = mode;
+  if (mode === 'rename') {
+    elements.groupEditor.classList.add('is-hidden');
+    renderGroups();
+    window.setTimeout(() => {
+      const input = document.querySelector('.group-inline-name');
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }, 0);
+    return;
+  }
   elements.groupEditor.classList.remove('is-hidden');
-  elements.groupNameInput.value = mode === 'rename' && group ? group.name : '';
-  elements.groupNameInput.placeholder = mode === 'rename' ? '新的分组名称' : '新分组名称';
+  elements.groupNameInput.value = '';
+  elements.groupNameInput.placeholder = '新分组名称';
+  renderGroups();
   window.setTimeout(() => {
     elements.groupNameInput.focus();
     elements.groupNameInput.select();
@@ -582,6 +912,17 @@ function closeGroupEditor() {
   state.groupEditorMode = null;
   elements.groupNameInput.value = '';
   elements.groupEditor.classList.add('is-hidden');
+  renderGroups();
+}
+
+async function saveInlineGroupName(value) {
+  if (state.groupEditorMode !== 'rename') return;
+  const group = getActiveGroup();
+  const nextName = String(value || '').trim();
+  if (group && nextName && nextName !== group.name) {
+    await api.renameGroup(group.id, nextName);
+  }
+  closeGroupEditor();
 }
 
 async function saveSettingsFromForm() {
@@ -612,6 +953,7 @@ function resetShortcutInputs() {
 
 async function init() {
   await refreshAll();
+  renderSidebarState();
   elements.input.focus();
 
   api.onTasksChanged((tasks) => {
@@ -659,12 +1001,68 @@ async function init() {
 for (const filter of elements.filters) {
   filter.addEventListener('click', () => {
     state.filter = filter.dataset.filter;
-    for (const item of elements.filters) {
-      item.classList.toggle('is-active', item === filter);
-    }
     renderTasks();
   });
 }
+
+elements.showAllTasks.addEventListener('click', () => {
+  state.sidebarView = 'all';
+  state.filter = 'all';
+  renderTasks();
+});
+
+elements.showCompletedTasks.addEventListener('click', () => {
+  state.sidebarView = 'completed';
+  state.filter = 'done';
+  renderTasks();
+});
+
+elements.showArchivedTasks.addEventListener('click', () => {
+  state.sidebarView = 'archived';
+  state.filter = 'archived';
+  renderTasks();
+});
+
+elements.showFavorites.addEventListener('click', () => {
+  state.sidebarView = 'favorites';
+  state.filter = 'favorites';
+  renderTasks();
+});
+
+elements.showFlagged.addEventListener('click', () => {
+  state.sidebarView = 'flagged';
+  state.filter = 'flagged';
+  renderTasks();
+});
+
+elements.showTodoTasks.addEventListener('click', () => {
+  state.sidebarView = 'labels';
+  state.filter = 'todo';
+  renderTasks();
+});
+
+elements.showOverdueTasks.addEventListener('click', () => {
+  state.sidebarView = 'labels';
+  state.filter = 'overdue';
+  renderTasks();
+});
+
+elements.showWaitingTasks.addEventListener('click', () => {
+  state.sidebarView = 'labels';
+  state.filter = 'waiting';
+  renderTasks();
+});
+
+elements.showRiskTasks.addEventListener('click', () => {
+  state.sidebarView = 'labels';
+  state.filter = 'risk';
+  renderTasks();
+});
+
+elements.sidebarToggle.addEventListener('click', () => {
+  state.isSidebarCollapsed = !state.isSidebarCollapsed;
+  renderSidebarState();
+});
 
 elements.form.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -680,6 +1078,30 @@ elements.deleteGroup.addEventListener('click', openDeleteGroupConfirm);
 elements.confirmDeleteGroup.addEventListener('click', confirmDeleteGroup);
 
 elements.cancelDeleteGroup.addEventListener('click', closeDeleteGroupConfirm);
+
+elements.groupContextRename.addEventListener('click', async () => {
+  const groupId = state.contextGroupId;
+  closeGroupContextMenu();
+  if (!groupId) return;
+  state.activeGroupId = groupId;
+  state.sidebarView = 'group';
+  await api.setActiveGroup(groupId);
+  openGroupEditor('rename');
+});
+
+elements.groupContextDelete.addEventListener('click', async () => {
+  const groupId = state.contextGroupId;
+  closeGroupContextMenu();
+  if (!groupId || groupId === DEFAULT_GROUP_ID) return;
+  state.activeGroupId = groupId;
+  state.sidebarView = 'group';
+  await api.setActiveGroup(groupId);
+  openDeleteGroupConfirm();
+});
+
+document.addEventListener('click', (event) => {
+  if (!elements.groupContextMenu.contains(event.target)) closeGroupContextMenu();
+});
 
 elements.groupEditor.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -736,10 +1158,9 @@ elements.hideWindow.addEventListener('click', () => {
   api.hideWindow();
 });
 
-elements.collapseWindow.addEventListener('click', async () => {
-  state.isCollapsed = await api.toggleCollapsed();
-  renderCollapsedState();
-});
+elements.collapseWindow.addEventListener('click', () => api.minimizeWindow());
+
+elements.maximizeWindow.addEventListener('click', () => api.toggleMaximizeWindow());
 
 elements.settingsToggle.addEventListener('click', async () => {
   if (state.isCollapsed) {
@@ -774,6 +1195,42 @@ elements.openNotificationSettings.addEventListener('click', () => {
 
 elements.resetShortcuts.addEventListener('click', resetShortcutInputs);
 
+elements.taskSearch.addEventListener('input', () => {
+  state.searchQuery = elements.taskSearch.value;
+  renderTasks();
+});
+
+elements.backupData.addEventListener('click', async () => {
+  elements.backupStatus.textContent = '正在准备备份…';
+  const result = await api.backupData();
+  elements.backupStatus.textContent = result && result.ok
+    ? '备份完成。'
+    : result && result.error ? result.error : '';
+});
+
+elements.restoreData.addEventListener('click', async () => {
+  elements.backupStatus.textContent = '正在恢复数据…';
+  const result = await api.restoreData();
+  elements.backupStatus.textContent = result && result.ok
+    ? '恢复完成，已自动保留恢复前备份。'
+    : result && result.error ? result.error : '';
+  if (result && result.ok) {
+    await refreshAll();
+    renderSettings();
+  }
+});
+
+async function exportTasks(format) {
+  elements.backupStatus.textContent = '正在导出任务…';
+  const result = await api.exportTasks(format);
+  elements.backupStatus.textContent = result && result.ok
+    ? '导出完成。'
+    : result && result.error ? result.error : '';
+}
+
+elements.exportCsv.addEventListener('click', () => exportTasks('csv'));
+elements.exportMarkdown.addEventListener('click', () => exportTasks('markdown'));
+
 elements.settingAlwaysOnTop.addEventListener('change', saveSettingsFromForm);
 
 elements.settingOpenAtLogin.addEventListener('change', saveSettingsFromForm);
@@ -806,6 +1263,10 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.key === 'Escape' && state.pendingDeleteGroupId) {
     closeDeleteGroupConfirm();
+    return;
+  }
+  if (event.key === 'Escape' && state.contextGroupId) {
+    closeGroupContextMenu();
     return;
   }
   if (event.key === 'Escape') {

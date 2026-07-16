@@ -10,37 +10,82 @@
     <main class="app-shell">
       <header class="titlebar">
         <div class="drag-region">
+          <span class="brand-mark" aria-hidden="true"></span>
           <strong>轻量提醒</strong>
+          <span class="style-label">轻拟物纸感</span>
           <span id="taskCount" class="task-count">0 项</span>
         </div>
+        <label class="title-search" for="taskSearch">
+          <span class="title-search-icon" aria-hidden="true"></span>
+          <input id="taskSearch" type="search" autocomplete="off" placeholder="搜索任务" aria-label="搜索任务" />
+        </label>
         <div class="window-actions">
-          <button id="settingsToggle" class="icon-button" title="设置" aria-label="设置">SET</button>
-          <button id="pinToggle" class="icon-button" title="置顶窗口" aria-label="置顶窗口">PIN</button>
-          <button id="collapseWindow" class="icon-button" title="折叠窗口" aria-label="折叠窗口">-</button>
-          <button id="hideWindow" class="icon-button" title="隐藏窗口" aria-label="隐藏窗口">_</button>
+          <button id="pinToggle" class="icon-button window-icon pin-icon" title="置顶窗口" aria-label="置顶窗口"></button>
+          <button id="collapseWindow" class="icon-button window-icon minimize-icon" title="最小化窗口" aria-label="最小化窗口"></button>
+          <button id="maximizeWindow" class="icon-button window-icon maximize-icon" title="最大化窗口" aria-label="最大化窗口"></button>
+          <button id="hideWindow" class="icon-button window-icon close-icon" title="关闭窗口" aria-label="关闭窗口"></button>
         </div>
       </header>
 
-      <section class="group-panel">
-        <div id="groupTabs" class="group-tabs" aria-label="任务分组"></div>
-        <div class="group-actions">
-          <button id="addGroup" type="button">新分组</button>
-          <button id="renameGroup" type="button">重命名</button>
-          <button id="deleteGroup" type="button">删除</button>
-        </div>
-        <form id="groupEditor" class="group-editor is-hidden">
-          <input id="groupNameInput" type="text" autocomplete="off" placeholder="分组名称" />
-          <button id="saveGroup" type="submit">保存</button>
-          <button id="cancelGroupEdit" type="button">取消</button>
-        </form>
-        <div id="groupDeleteConfirm" class="group-confirm is-hidden">
-          <span id="groupDeleteText">删除当前分组，任务移回收集箱？</span>
-          <button id="confirmDeleteGroup" type="button">删除</button>
-          <button id="cancelDeleteGroup" type="button">取消</button>
-        </div>
-      </section>
+      <div class="app-workspace">
+        <aside class="sidebar">
+          <button id="sidebarToggle" class="sidebar-toggle" type="button" title="收起侧边栏" aria-label="收起侧边栏"></button>
+          <section class="group-panel">
+            <div id="groupTabs" class="group-tabs" aria-label="任务分组"></div>
+            <form id="groupEditor" class="group-editor is-hidden">
+              <input id="groupNameInput" type="text" autocomplete="off" placeholder="分组名称" />
+              <button id="saveGroup" type="submit">保存</button>
+              <button id="cancelGroupEdit" type="button">取消</button>
+            </form>
+            <div id="groupDeleteConfirm" class="group-confirm is-hidden">
+              <span id="groupDeleteText">删除当前分组，任务移回收集箱？</span>
+              <button id="confirmDeleteGroup" type="button">删除</button>
+              <button id="cancelDeleteGroup" type="button">取消</button>
+            </div>
+            <div class="group-actions">
+              <button id="addGroup" class="new-group-button" type="button"><span class="new-group-plus">+</span>新建分组</button>
+              <button id="renameGroup" type="button">重命名</button>
+              <button id="deleteGroup" type="button">删除</button>
+            </div>
+          </section>
+          <div id="groupContextMenu" class="group-context-menu is-hidden" role="menu" aria-label="分组操作">
+            <button id="groupContextRename" type="button" role="menuitem">重命名</button>
+            <button id="groupContextDelete" type="button" role="menuitem">删除</button>
+          </div>
+          <section class="sidebar-section sidebar-labels" aria-label="任务筛选">
+            <h2>筛选</h2>
+            <button id="showTodoTasks" class="sidebar-label-item" type="button"><span class="label-dot todo-dot"></span><span>待办</span><strong id="todoTaskCount">0</strong></button>
+            <button id="showOverdueTasks" class="sidebar-label-item" type="button"><span class="label-dot overdue-dot"></span><span>逾期</span><strong id="overdueTaskCount">0</strong></button>
+            <button id="showWaitingTasks" class="sidebar-label-item" type="button"><span class="label-dot waiting-dot"></span><span>等反馈</span><strong id="waitingTaskCount">0</strong></button>
+            <button id="showRiskTasks" class="sidebar-label-item" type="button"><span class="label-dot risk-dot"></span><span>风险</span><strong id="riskTaskCount">0</strong></button>
+          </section>
+          <section class="sidebar-section sidebar-more" aria-label="更多">
+            <h2>更多</h2>
+            <button id="showFavorites" class="sidebar-nav-item" type="button"><span class="side-icon">☆</span><span>收藏</span><strong id="favoriteTaskCount">0</strong></button>
+            <button id="showFlagged" class="sidebar-nav-item" type="button"><span class="side-icon flag-side-icon"></span><span>标记</span><strong id="flaggedTaskCount">0</strong></button>
+            <button id="showAllTasks" class="sidebar-nav-item" type="button"><span class="side-icon">▱</span><span>全部</span><strong id="allTaskCount">0</strong></button>
+            <button id="showCompletedTasks" class="sidebar-nav-item" type="button"><span class="side-icon">☑</span><span>已完成</span><strong id="completedTaskCount">0</strong></button>
+            <button id="showArchivedTasks" class="sidebar-nav-item" type="button"><span class="side-icon archive-side-icon"></span><span>归档</span><strong id="archivedTaskCount">0</strong></button>
+          </section>
+          <p class="sidebar-note">把临时事项先收进来，再慢慢理清。</p>
+          <div class="sidebar-footer">
+            <button id="settingsToggle" class="sidebar-settings-button" type="button" title="设置" aria-label="设置">
+              <span>设置</span>
+            </button>
+          </div>
+        </aside>
 
-      <section class="quick-add">
+        <div class="main-content">
+          <section class="list-toolbar">
+            <button class="filter is-active" data-filter="todo" type="button">待办</button>
+            <button class="filter" data-filter="overdue" type="button">逾期</button>
+            <button class="filter" data-filter="waiting" type="button">等反馈</button>
+            <button class="filter" data-filter="risk" type="button">风险</button>
+            <button class="filter" data-filter="all" type="button">全部</button>
+            <button class="filter" data-filter="done" type="button">已完成</button>
+          </section>
+
+          <section class="quick-add">
         <section id="reminderPanel" class="reminder-panel is-hidden" aria-live="assertive">
           <div class="reminder-panel-header">
             <strong>到点提醒</strong>
@@ -59,18 +104,11 @@
           <button id="pasteImage" type="button">粘贴图片</button>
           <button id="clearCompleted" type="button">清理已完成</button>
         </div>
-      </section>
+          </section>
 
-      <section class="list-toolbar">
-        <button class="filter is-active" data-filter="todo" type="button">待办</button>
-        <button class="filter" data-filter="overdue" type="button">逾期</button>
-        <button class="filter" data-filter="waiting" type="button">等反馈</button>
-        <button class="filter" data-filter="risk" type="button">风险</button>
-        <button class="filter" data-filter="all" type="button">全部</button>
-        <button class="filter" data-filter="done" type="button">已完成</button>
-      </section>
-
-      <section id="taskList" class="task-list" aria-live="polite"></section>
+          <section id="taskList" class="task-list" aria-live="polite"></section>
+        </div>
+      </div>
 
       <section id="settingsPanel" class="settings-panel is-hidden" aria-label="设置">
         <div class="settings-card">
@@ -120,6 +158,16 @@
             <button id="openNotificationSettings" type="button">Windows通知设置</button>
             <button id="resetShortcuts" type="button">恢复默认快捷键</button>
           </div>
+          <div class="data-actions">
+            <span>数据管理</span>
+            <div>
+              <button id="backupData" type="button">备份数据</button>
+              <button id="restoreData" type="button">恢复数据</button>
+              <button id="exportCsv" type="button">导出 CSV</button>
+              <button id="exportMarkdown" type="button">导出 Markdown</button>
+            </div>
+          </div>
+          <div id="backupStatus" class="backup-status" aria-live="polite"></div>
         </div>
       </section>
 
@@ -133,7 +181,7 @@
       <article class="task-item">
         <button class="complete-button" type="button" title="完成 / 取消完成" aria-label="完成 / 取消完成"></button>
         <div class="task-main">
-          <input class="task-title" type="text" />
+          <textarea class="task-title" rows="1" aria-label="任务标题"></textarea>
           <div class="task-meta"></div>
           <div class="task-details">
             <div class="task-controls">
@@ -143,15 +191,17 @@
             </div>
             <div class="task-actions">
               <button class="attach-task" type="button" title="给任务添加图片" aria-label="给任务添加图片">图片</button>
-              <button class="pin-task" type="button" title="置顶任务" aria-label="置顶任务">置顶</button>
               <button class="snooze-task" type="button" title="30分钟后提醒" aria-label="30分钟后提醒">延后30分</button>
               <button class="delete-task" type="button" title="删除任务" aria-label="删除任务">删除</button>
             </div>
             <div class="attachment-strip"></div>
           </div>
         </div>
-        <div class="task-quick-actions">
+        <div class="task-thumbnail"></div>
+        <div class="task-card-actions">
           <button class="pm-status-task" type="button" title="切换任务状态" aria-label="切换任务状态">待</button>
+          <button class="favorite-task" type="button" title="收藏任务" aria-label="收藏任务">☆</button>
+          <button class="flag-task" type="button" title="标记并置顶任务" aria-label="标记并置顶任务"></button>
           <button class="toggle-task-details" type="button" title="展开任务操作" aria-label="展开任务操作" aria-expanded="false">•••</button>
         </div>
       </article>
